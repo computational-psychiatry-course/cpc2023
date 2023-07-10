@@ -1,0 +1,18 @@
+[submodule "main-course/CPCZurich_2022-09-13_5_FittingAModelVBAndMCMC_LionelRigoux_add"]
+	path = main-course/CPCZurich_2022-09-13_5_FittingAModelVBAndMCMC_LionelRigoux_add
+	url = https://github.com/lionel-rigoux/tutorial-bayesian-inference.git
+[submodule "tutorials/tutorial-e"]
+	path = tutorials/tutorial-e
+	url = git@github.com:arielzylberberg/CompPsychCourse_Zurich2022.git
+[submodule "tutorials/tutorial-g"]
+	path = tutorials/tutorial-g
+	url = git@github.com:saigerutherford/CPC_ML_tutorial.git
+[submodule "tutorials/tutorial-h/DCM_for_ERPs"]
+	path = tutorials/tutorial-h/DCM_for_ERPs
+	url = git@github.com:AshleyTyrer/DCM_for_ERPs.git
+[submodule "installation-guides"]
+	path = installation-guides
+	url = git@github.com:computational-psychiatry-course/tutorial-installation-guides.git
+[submodule "tutorials/tutorial-a"]
+	path = tutorials/tutorial-a
+	url = git@github.com:toreerdmann/HGF-workshop.git
