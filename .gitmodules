@@ -16,3 +16,6 @@
 [submodule "tutorials/tutorial-a"]
 	path = tutorials/tutorial-a
 	url = git@github.com:toreerdmann/HGF-workshop.git
+[submodule "tutorials/tutorial-D"]
+	path = tutorials/tutorial-D
+	url = https://github.com/arielzylberberg/CompPsychCourse_Zurich2023.git
