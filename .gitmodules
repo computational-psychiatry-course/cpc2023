@@ -19,3 +19,6 @@
 [submodule "tutorials/tutorial-D"]
 	path = tutorials/tutorial-D
 	url = https://github.com/arielzylberberg/CompPsychCourse_Zurich2023.git
+[submodule "tutorials/tutorial-G"]
+	path = tutorials/tutorial-G
+	url = https://github.com/AshleyTyrer/DCM_for_ERPs.git
