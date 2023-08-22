@@ -22,3 +22,6 @@
 [submodule "tutorials/tutorial-G"]
 	path = tutorials/tutorial-G
 	url = https://github.com/AshleyTyrer/DCM_for_ERPs.git
+[submodule "tutorial-installation-guides"]
+	path = tutorial-installation-guides
+	url = git@github.com:computational-psychiatry-course/tutorial-installation-guides.git
