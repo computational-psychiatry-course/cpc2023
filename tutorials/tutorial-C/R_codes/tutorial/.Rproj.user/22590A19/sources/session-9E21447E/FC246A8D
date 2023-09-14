@@ -1,0 +1,24 @@
+{
+    "id": "FC246A8D",
+    "path": "~/Dropbox/RL/analysis/GN/rasterPlot_v2.R",
+    "project_path": null,
+    "type": "r_source",
+    "hash": "0",
+    "contents": "",
+    "dirty": false,
+    "created": 1668582922330.0,
+    "source_on_save": false,
+    "relative_order": 10,
+    "properties": {
+        "source_window_id": "",
+        "Source": "Source"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1543490933,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1543490933,
+    "read_only": false,
+    "read_only_alternatives": []
+}

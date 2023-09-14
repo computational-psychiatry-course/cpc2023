@@ -1,0 +1,26 @@
+{
+    "id": "7A1222F3",
+    "path": "~/Dropbox/RL/analysis/GN/modeling/GNG_simulation_RBS_v9_M11.R",
+    "project_path": null,
+    "type": "r_source",
+    "hash": "0",
+    "contents": "",
+    "dirty": false,
+    "created": 1668580235856.0,
+    "source_on_save": false,
+    "relative_order": 9,
+    "properties": {
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "25,22",
+        "scrollLine": "9"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1668580826,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1668580826152,
+    "read_only": false,
+    "read_only_alternatives": []
+}

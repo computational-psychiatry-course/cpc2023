@@ -1,0 +1,469 @@
+# GNG_Stan_M11_HBA_v15.R
+# HBA, M"11" 
+# different learning rate for 
+# 1/10/2013 - 
+# cue type:
+# 1: goWin (go to win), 2: nogoWin (noGo to win), 
+# 3: goAvoid (go to avoid losing), 4: nogoAvoid (noGo to avoid losing)
+# CAUTION! The order of cues from NEMO data is different from the order in the Guitart-Masip 2012 Fig 2!! 
+# outcome: 0, 1, or -1
+# validTrial: valid trial (1) or invalid trial (0)
+# Based on BA_v5: fixed code (pGo(tr=1) != 0.5)
+# v2: pi > 0 and change the range of parameters a bit.. (rho <5 --> rho < 10)
+#     save individual posterior dists and also save their posterior means as a txt file  
+# v3: uses logistic and exponential functions for hierarchical structures
+# v4: reparameterize individual normal distributions to improve mixing
+# v5: Manual init values --> speed up adaptation process
+#     send an email when code is finished --> CHECK (line 405) IF IT'S USING MY EMAIL!!
+# v6: save individual parameters in mean, median, or mode
+# v7: corrected a critical error..
+# v8: chanced mu prior from 1 to 1.5
+# v9: beta priors for parameters --> [0, 1]
+# v10: use normal(0, 1) and probit functions for pars --> [0, 1] 
+# v10.1: use approximated probit for better (efficient) mixing
+# v12: change prior b (normal(0,1)-->normal(0,10)), pi(exp-->10*Phi)
+# M7: separate learning for go/nogo. numPars as an input to data
+# M8: totally independent separate learning for go/nogo. 
+# M8.1: flat prior for rho.. 0<rho<10. real rho = exp(rho) -1
+# M8.2: flat prior for rho, Stan rho outputs are in the correct scale.
+# M10: single learning rate. Separate pi parameter for gains and losses. 
+# V13: using truncated normal for pi and rho --> FAILED! SAMPLES DON'T MIX
+# v14: allowing piRew and piPun to go below zero
+# v15: 6/6/2013: changed the range of rho (+-10 --> +-6). flat prior for rho.. 0<rho<6. real rho = exp(rho) -1
+# M11: single learning rate and pi parameter. Separate rho parameters for gains and losses.
+
+rm(list=ls())
+library(ggplot2)  # to install this package, type --> install.packages("ggplot2") in console.
+library(rstan)    # For installation, see --> http://code.google.com/p/stan/wiki/RStanGettingStarted#How_to_Install_RStan
+set_cppo('fast')  # best running speed
+library(parallel)
+library(mail) # to send emails
+library(modeest)  # mode estimation
+source("~/Dropbox/R_library/myFunctions/multiplot.R")  
+if ( .Platform$pkgType != "mac.binary" ) {  # if not a mac, use x11 instead of quartz
+  quartz <- function( ... ) X11( ... ) 
+}
+
+# 6 parameters
+# 0 < xi(noise) < 1
+# 0 < ep(learning) < 1
+# -Inf < b(bias) < Inf
+# 0 < pi(pavlov) < 10
+# 0 < rhoRew(util) 
+# 0 < rhoPun(util)
+
+###############################################################################
+parallelComputing = F # T or F. If T, make sure # of cpus >= nchains
+gn_path = "~/Dropbox/RL/analysis/GN/modeling/"  # GN data path (multiple subjects).
+setwd( gn_path )
+saveDir = "."
+saveFiles =  F          # save files? T or F
+saveIndPars = F        # save each individual's posteriors? T or F
+calcIndPars = "mean"   # mean or median or mode for individual estimates
+plotFigs = T           # plot figures? T or F
+sendEmail = T          # send an email after completion? T or F
+numPars = 6            # number of parameters    
+nwarmup = 4000 # warm up (discarded)
+niter = 8000 # number of iterations (including warmup)
+nchains = 1   # number of chains 
+#maxTrials = 800 # maximum number of trials (e.g., 100 or 120)
+POI = c("mu_xi", "mu_ep", "mu_b", "mu_pi", "mu_rhoRew", "mu_rhoPun", "sigma", "xi", "ep", "b", "pi", "rhoRew", "rhoPun") # parameters of interest. NA if estimating all parameters.
+#inits = c(0.05, 0.25, 1.0, 0.1, exp(1.8), exp(1.8))  # inits for parameters (xi, ep, b, pi, rhoRew, rhoPun)
+inits = c(0.06, 0.07, 1.15, 0.45, exp(2.8), exp(2.8))  # inits for parameters (xi, ep, b, pi, rhoRew, rhoPun)  # for nonlearners
+#POI = c("mu_xi", "mu_ep", "mu_b", "mu_pi", "mu_rho", "sigma") # parameters of interest. NA if estimating all parameters.
+modelName = "GNG_M11_Stan_v15"    #"3par_PT_softmax" or "3par_PT_DFT"
+#saveName = "GNmodelReady_all_N102"   # just take out .txt from fileName... GNmodelReady_N44, GNmodelReady_learner_N27, GNmodelReady_nonlearner_N17 
+saveName = "GNG_simulData_N5"
+###############################################################################
+startTime=Sys.time()      			#store the time
+cat("\nModel name = ", modelName, "\n")
+cat("File name = ", saveName, "\n\n")
+
+dat = read.table(file.path(gn_path, paste(saveName, ".txt", sep="")), header=T)  
+
+subjList =  unique(dat[,"subjID"])  # list of subjects x blocks
+numSubjs = length(subjList)  # number of subjects
+maxTrials = dim(dat)[1] / numSubjs
+
+modelString = '
+data {
+  int<lower=1> N;
+  int<lower=1> T;
+  int numPars;
+  int<lower= -1, upper=1> outcome[N, T];
+  int<lower=0, upper=1> pressed[N, T];
+  int<lower=1, upper=4> cue[N, T];
+}
+transformed data {
+}
+parameters {
+  real<lower=-10, upper=10> mu_p[numPars];  
+  real<lower=0.01, upper=10> sigma[numPars];  # set its min to 0.01 to prevent getting stuck
+  real<lower=-10, upper=10> xi_p[N]; # noise 
+  real<lower=-10, upper=10> ep_p[N]; # learning rate
+  real<lower=-10, upper=10> b_p[N]; # go bias
+  real<lower=-10, upper=10> pi_p[N]; # Pav bias.
+  real<lower=-10, upper=10> rhoRew_p[N]; # rho reward, inv temp
+  real<lower=-10, upper=10> rhoPun_p[N]; # rho punishment, inv temp
+}
+model {
+  for (k in 1:numPars) {
+      mu_p[k] ~ normal(0, 1.0); 
+      sigma[k] ~ uniform(0.01, 5);  
+  }
+  for (i in 1:N) {
+    real wv_g[4];  # action wegith for go
+    real wv_ng[4]; # action wegith for nogo
+    real qv_g[4];  # Q value for go
+    real qv_ng[4]; # Q value for nogo
+    real sv[4];    # stimulus value 
+    real pGo[4];   # prob of go (press) 
+
+    real xi_tmp;
+    real ep_tmp;
+    real b_tmp;
+    real pi_tmp;
+    real rhoRew_tmp;
+    real rhoPun_tmp;
+    
+    xi_p[i] ~ normal(0, 1.0);   #normal( mu_p[1], sigma[1]);
+    ep_p[i] ~ normal(0, 1.0);   #normal( mu_p[2], sigma[2]);
+    b_p[i] ~ normal(0, 10.0);    #normal( mu_p[3], sigma[3]);   # revised SD (1-->10)
+    pi_p[i] ~ normal(0, 5);   #normal( mu_p[4], sigma[4]);   
+    rhoRew_p[i] ~ normal(0, 1);   #normal( mu_p[5], sigma[5]);   
+    rhoPun_p[i]  ~  normal(0, 1);  #normal( mu_p[6], sigma[6]);   
+    
+    # Phi --> inv_logit (inv_logit is more efficient) --> Phi_approx
+    xi_tmp <-    Phi_approx(mu_p[1] + sigma[1]*xi_p[i]);
+    ep_tmp <-    Phi_approx(mu_p[2] + sigma[2]*ep_p[i]);
+    b_tmp <-     mu_p[3] + sigma[3] * b_p[i];
+    pi_tmp <-    mu_p[4] + sigma[4] * pi_p[i];
+    rhoRew_tmp <-   6 * Phi_approx(mu_p[5] + sigma[5]*rhoRew_p[i]);
+    rhoPun_tmp <-   6 * Phi_approx(mu_p[6] + sigma[6]*rhoPun_p[i]);
+
+    for (r in 1:4) {  # tr=1 values for 4 cues
+      wv_g[r] <- 0;
+      wv_ng[r] <- 0;
+      qv_g[r] <- 0;
+      qv_ng[r] <- 0;
+      sv[r] <- 0;
+    }
+     
+    for (t in 1:T)  {
+        wv_g[ cue[i,t] ] <- qv_g[ cue[i,t] ] + b_tmp + pi_tmp * sv[ cue[i,t] ];
+        wv_ng[ cue[i,t] ] <- qv_ng[ cue[i,t] ];  # qv_ng is always equal to wv_ng (regardless of action)      
+        
+        pGo[ cue[i,t] ] <- inv_logit( wv_g[ cue[i,t] ] - wv_ng[ cue[i,t] ] ); 
+        pGo[ cue[i,t] ] <- pGo[ cue[i,t] ] * (1 - xi_tmp) + xi_tmp/2;  # noise
+        pressed[i,t] ~ bernoulli( pGo[ cue[i,t] ] );
+  
+        # after receiving feedback, update sv[t+1]
+        if (outcome[i,t] >= 0) {
+          sv[ cue[i,t] ] <- sv[ cue[i,t] ] + ep_tmp * ( (exp(rhoRew_tmp)-1) * outcome[i,t] - sv[ cue[i,t] ] );
+        } else {
+          sv[ cue[i,t] ] <- sv[ cue[i,t] ] + ep_tmp * ( (exp(rhoPun_tmp)-1) * outcome[i,t] - sv[ cue[i,t] ] );
+        }       
+
+        # update action values
+        if (pressed[i,t]) { # update go value 
+          if (outcome[i,t] >=0) {
+            qv_g[ cue[i,t] ] <- qv_g[ cue[i,t] ] + ep_tmp * ( (exp(rhoRew_tmp)-1) * outcome[i,t] - qv_g[ cue[i,t] ]);
+          } else {
+            qv_g[ cue[i,t] ] <- qv_g[ cue[i,t] ] + ep_tmp * ( (exp(rhoPun_tmp)-1) * outcome[i,t] - qv_g[ cue[i,t] ]);
+          }
+        } else { # update no-go value  
+            if (outcome[i,t] >=0) {
+              qv_ng[ cue[i,t] ] <- qv_ng[ cue[i,t] ] + ep_tmp * ( (exp(rhoRew_tmp)-1) * outcome[i,t] - qv_ng[ cue[i,t] ]);  
+            } else{
+              qv_ng[ cue[i,t] ] <- qv_ng[ cue[i,t] ] + ep_tmp * ( (exp(rhoPun_tmp)-1) * outcome[i,t] - qv_ng[ cue[i,t] ]);  
+            }
+        }  
+    } # end of t loop
+  } # end of i loop
+}
+generated quantities {
+  real<lower=0, upper=1> mu_xi;
+  real<lower=0, upper=1> mu_ep;
+  real<lower=-10, upper=10> mu_b;
+  real<lower=-10, upper=10> mu_pi;
+  real<lower=0> mu_rhoRew;
+  real<lower=0> mu_rhoPun;
+
+  real<lower=0, upper=1> xi[N];
+  real<lower=0, upper=1> ep[N];
+  real b[N];
+  real pi[N];
+  real<lower=0> rhoRew[N];
+  real<lower=0> rhoPun[N];
+
+  mu_xi <- Phi_approx(mu_p[1]);
+  mu_ep <- Phi_approx(mu_p[2]);
+  mu_b <- mu_p[3];
+  mu_pi <- mu_p[4];
+  mu_rhoRew <- exp( 6 * Phi_approx(mu_p[5]) ) - 1;
+  mu_rhoPun <- exp( 6 * Phi_approx(mu_p[6]) ) - 1;
+  
+  for (i in 1:N) {
+    xi[i] <- Phi_approx( mu_p[1] + sigma[1] * xi_p[i] );    
+    ep[i] <- Phi_approx( mu_p[2] + sigma[2] * ep_p[i] );    
+    b[i] <- mu_p[3] + sigma[3] * b_p[i];
+    pi[i] <- mu_p[4] + sigma[4] * pi_p[i];
+    rhoRew[i] <- exp( 6 * Phi_approx( mu_p[5] + sigma[5] * rhoRew_p[i]) ) -1;
+    rhoPun[i] <- exp( 6 * Phi_approx( mu_p[6] + sigma[6] * rhoPun_p[i]) ) -1;
+  }
+}
+' 
+
+################################################################################
+# THE DATA.  ###################################################################
+################################################################################
+outcome = array(NA, c(numSubjs, maxTrials) )
+pressed = array(NA, c(numSubjs, maxTrials) )
+cue = array(NA, c(numSubjs, maxTrials))
+
+for (i in 1:numSubjs) {
+  curSubj = subjList[i]
+  tmp = subset(dat, subjID == curSubj)
+  outcome[i, ] = tmp$outcome
+  pressed[i, ] = tmp$keyPressed
+  cue[i, ] = tmp$cue
+}
+
+dataList = list(
+  N = numSubjs,
+  T = maxTrials,
+  outcome = outcome,
+  pressed = pressed,
+  cue = cue,
+  numPars = numPars
+)
+
+# inits
+#logit = function(p) log(p/(1-p))  # for xi and ep
+genInitList <- function() {
+  list(
+    mu_p = c(qnorm(inits[1]), qnorm(inits[2]), inits[3], inits[4], qnorm(log(inits[5]+1)/6), qnorm(log(inits[6]+1)/6) )    # intial values
+    , sigma = rep(1.0, numPars)
+    , xi_p = rep(qnorm(inits[1]), numSubjs)
+    , ep_p = rep(qnorm(inits[2]), numSubjs)
+    , b_p = rep(inits[3], numSubjs)
+    , pi_p = rep(inits[4], numSubjs)
+    , rhoRew_p = rep(qnorm(log(inits[5]+1)/6), numSubjs)
+    , rhoPun_p = rep(qnorm(log(inits[6]+1)/6), numSubjs)
+  )
+}
+
+
+
+fit <- stan(model_code = modelString, data = dataList, #pars = c("alpha0", "alpha1"), 
+            warmup = nwarmup, pars = POI,     
+            init = genInitList,  # uncomment this line to use random initial values
+            iter = niter, chains = nchains)  
+
+#parVals = as.array(fit)
+parVals = extract(fit, permuted=T)
+
+xiHypSample = parVals$mu_xi
+epHypSample = parVals$mu_ep
+bHypSample = parVals$mu_b
+piHypSample = parVals$mu_pi
+rhoRewHypSample = parVals$mu_rhoRew
+rhoPunHypSample = parVals$mu_rhoPun
+
+sigmaSample = parVals$sigma
+
+
+xi = parVals$xi
+ep = parVals$ep 
+b = parVals$b
+pi = parVals$pi
+rhoRew= parVals$rhoRew
+rhoPun = parVals$rhoPun
+
+negLL = -parVals$lp__   # negative lp__
+
+
+# save this workspace for just in case data would be lost in a later section.
+if (saveFiles) {
+  save.image( file.path(saveDir, paste("HBA_", modelName, "_nchains", nchains, "_", saveName, 
+                                       "_niters", niter, "_nwarmup", nwarmup,
+                                       ".Rdata", sep="") )  )
+}
+
+endTime = Sys.time()
+timeTook = endTime - startTime
+print(fit)
+print(timeTook)
+
+allIndPars = array(NA, c(numSubjs, numPars))
+allIndPars = as.data.frame(allIndPars)
+for (i in 1:numSubjs) {
+  if (calcIndPars=="mean") {
+    allIndPars[i, ] = c( mean(xi[, i]), mean(ep[, i]), mean(b[, i]), mean(pi[, i]), mean(rhoRew[, i]), mean(rhoPun[, i]) )    
+  } else if (calcIndPars=="median") {
+    allIndPars[i, ] = c( median(xi[, i]), median(ep[, i]), median(b[, i]), median(pi[, i]), median(rhoRew[, i]), median(rhoPun[, i]) )    
+  } else if (calcIndPars=="mode") {
+    allIndPars[i, ] = c( mlv(xi[, i], method="shorth")[1], 
+                         mlv(ep[, i], method="shorth")[1],
+                         mlv(b[, i], method="shorth")[1],
+                         mlv(pi[, i], method="shorth")[1],
+                         mlv(rhoRew[, i], method="shorth")[1],
+                         mlv(rhoPun[, i], method="shorth")[1] )
+  }   
+}  
+
+allIndPars = cbind(allIndPars, subjList)
+colnames(allIndPars) = c("xi", "ep", "b", "pi", "rhoRew", "rhoPun", "subjID")  
+
+if (plotFigs) {
+  quartz()
+  traceplot(fit,ask=F)  # traceplot
+  #plot(fit)  
+  quartz(width=8, height=3);
+  layout( matrix(1:numPars, 1, numPars, byrow=F))
+  hist(xiHypSample, main=round(mean(xiHypSample),3), xlab="xi (noise)", freq=F)
+  hist(epHypSample, main=round(mean(epHypSample),3), xlab="epsilon (learning)", freq=F)
+  hist(bHypSample, main=round(mean(bHypSample),3), xlab="b (Go bias)", freq=F)
+  hist(piHypSample, main=round(mean(piHypSample),3), xlab="pi (Pav. bias parameter)", freq=F)
+  hist(log(rhoRewHypSample), main=round(mean(log(rhoRewHypSample)),3), xlab="log(rho_rew) (effective size)", freq=F)
+  hist(log(rhoPunHypSample), main=round(mean(log(rhoPunHypSample)),3), xlab="log(rho_pun) (effective size)", freq=F)
+  
+  
+  ## ggplot2 type
+  # xi
+  tmpSample = xiHypSample; tmpMean = round(mean(tmpSample),3)
+  tmpSample = as.data.frame(tmpSample); colnames(tmpSample) = "value"
+  h1 = ggplot( tmpSample, aes(x=value), size=10) + geom_histogram(aes(y=..density..), colour="black", fill="darkgrey", binwidth=(range(tmpSample)[2] - range(tmpSample)[1])/15) +
+    xlab( expression( paste(xi, " (noise)") ) ) + ylab("Density") + #xlim(0, 1) +
+    ggtitle( paste("Mean=", tmpMean, sep="") ) +
+    theme(axis.text.x=element_text(size=10)) +
+    theme(axis.text.y=element_text(size=10)) +
+    theme(axis.title.y=element_text(size=10)) + 
+    theme(axis.title.x=element_text(size=10)) +
+    theme(plot.title=element_text(size=10)) 
+  # ep
+  tmpSample = epHypSample; tmpMean = round(mean(tmpSample),3)
+  tmpSample = as.data.frame(tmpSample); colnames(tmpSample) = "value"
+  h2 = ggplot( tmpSample, aes(x=value), size=10) + geom_histogram(aes(y=..density..), colour="black", fill="darkgrey", binwidth=(range(tmpSample)[2] - range(tmpSample)[1])/15) +
+    xlab( expression( paste(epsilon, " (learning)") ) ) + ylab("") + #xlim(0, 1) +
+    ggtitle( paste("Mean=", tmpMean, sep="") ) +
+    theme(axis.text.x=element_text(size=10)) +
+    theme(axis.text.y=element_text(size=10)) +
+    theme(axis.title.y=element_text(size=10)) + 
+    theme(axis.title.x=element_text(size=10)) +
+    theme(plot.title=element_text(size=10)) 
+  # b
+  tmpSample = bHypSample; tmpMean = round(mean(tmpSample),3)
+  tmpSample = as.data.frame(tmpSample); colnames(tmpSample) = "value"
+  h3 = ggplot( tmpSample, aes(x=value), size=10) + geom_histogram(aes(y=..density..), colour="black", fill="darkgrey", binwidth=(range(tmpSample)[2] - range(tmpSample)[1])/15) +
+    xlab( expression( paste(b, " (bias)") ) ) + ylab("") + #xlim(0, 4) +
+    ggtitle( paste("Mean=", tmpMean, sep="") ) +
+    theme(axis.text.x=element_text(size=10)) +
+    theme(axis.text.y=element_text(size=10)) +
+    theme(axis.title.y=element_text(size=10)) + 
+    theme(axis.title.x=element_text(size=10)) +
+    theme(plot.title=element_text(size=10)) 
+  # pi
+  tmpSample = piHypSample; tmpMean = round(mean(tmpSample),3)
+  tmpSample = as.data.frame(tmpSample); colnames(tmpSample) = "value"
+  h4 = ggplot( tmpSample, aes(x=value), size=10) + geom_histogram(aes(y=..density..), colour="black", fill="darkgrey", binwidth=(range(tmpSample)[2] - range(tmpSample)[1])/15) +
+    xlab( expression(pi) ) + ylab("") + #xlim(0, 2) +
+    ggtitle( paste("Mean=", tmpMean, sep="") ) +
+    theme(axis.text.x=element_text(size=10)) +
+    theme(axis.text.y=element_text(size=10)) +
+    theme(axis.title.y=element_text(size=10)) + 
+    theme(axis.title.x=element_text(size=10)) +
+    theme(plot.title=element_text(size=10)) 
+  # rhoRew
+  tmpSample = log(rhoRewHypSample); tmpMean = round(mean(tmpSample),3)
+  tmpSample = as.data.frame(tmpSample); colnames(tmpSample) = "value"
+  h5 = ggplot( tmpSample, aes(x=value), size=10) + geom_histogram(aes(y=..density..), colour="black", fill="darkgrey", binwidth=(range(tmpSample)[2] - range(tmpSample)[1])/15) +
+    xlab( expression( paste("log(", rho[rew], ") (effective size)") ) ) + ylab("") + #xlim(0, 4) +
+    ggtitle( paste("Mean=", tmpMean, sep="") ) +
+    theme(axis.text.x=element_text(size=10)) +
+    theme(axis.text.y=element_text(size=10)) +
+    theme(axis.title.y=element_text(size=10)) + 
+    theme(axis.title.x=element_text(size=10)) +
+    theme(plot.title=element_text(size=10)) 
+  # rhoPun
+  tmpSample = log(rhoPunHypSample); tmpMean = round(mean(tmpSample),3)
+  tmpSample = as.data.frame(tmpSample); colnames(tmpSample) = "value"
+  h6 = ggplot( tmpSample, aes(x=value), size=10) + geom_histogram(aes(y=..density..), colour="black", fill="darkgrey", binwidth=(range(tmpSample)[2] - range(tmpSample)[1])/15) +
+    xlab( expression( paste("log(", rho[pun], ") (effective size)") ) ) + ylab("") + #xlim(0, 4) +
+    ggtitle( paste("Mean=", tmpMean, sep="") ) +
+    theme(axis.text.x=element_text(size=10)) +
+    theme(axis.text.y=element_text(size=10)) +
+    theme(axis.title.y=element_text(size=10)) + 
+    theme(axis.title.x=element_text(size=10)) +
+    theme(plot.title=element_text(size=10)) 
+  
+  quartz(width=12, height=4);
+  multiplot(h1,h2,h3,h4,h5,h6, cols=numPars)
+  
+  # Plot individual parameters
+  quartz(width=10, height=4); par(mai=c(0.6, 0.6, 0.2, 0.05))
+  layout( matrix(1:numPars, 1, numPars, byrow=F))
+  tmpHyperMean = mean( xiHypSample)
+  plot(allIndPars$xi, main=expression(xi), xlab="Subject", ylab="Mean value", ylim=c(0,1), type="b"); abline(h=tmpHyperMean, lty=3, col="red")
+  tmpHyperMean = mean( epHypSample)
+  plot(allIndPars$ep, main=expression(epsilon), xlab="Subject", ylab="", ylim=c(0,1), type="b"); abline(h=tmpHyperMean, lty=3, col="red")
+  tmpHyperMean = mean( bHypSample)
+  plot(allIndPars$b, main=expression(b), xlab="Subject", ylab="", ylim=c(-1, 8), type="b"); abline(h=tmpHyperMean, lty=3, col="red")
+  tmpHyperMean = mean( piHypSample)
+  plot(allIndPars$pi, main=expression(pi), xlab="Subject", ylab="", ylim=c(-1,6), type="b"); abline(h=tmpHyperMean, lty=3, col="red")
+  tmpHyperMean = mean( rhoRewHypSample)
+  plot(log(allIndPars$rhoRew), main=expression(paste("log(", rho[rew], ")")), xlab="Subject", ylab="", ylim=c(-1,7), type="b"); abline(h=log(tmpHyperMean), lty=3, col="red")  
+  tmpHyperMean = mean( rhoPunHypSample)
+  plot(log(allIndPars$rhoPun), main=expression(paste("log(", rho[pun], ")")), xlab="Subject", ylab="", ylim=c(-1,7), type="b"); abline(h=log(tmpHyperMean), lty=3, col="red")  
+  
+}
+# 
+# if (saveIndPars) {
+#   for (i in 1:numSubjs) {
+#     pdf(width=10, height=5,file = file.path(gn_path, "indPars", paste(subjList[i], "_", modelName, "_posteriors.pdf", sep="") ) )
+#     layout(matrix(c(1:5), 1, 5, byrow=F) )  
+#     hist(xi[, i], main=round(mean(xi[, i]),3), xlab=expression( paste(xi, " (noise)") ), freq=F, xlim=c(0,1)) 
+#     hist(ep[, i], main=round(mean(ep[, i]),3), xlab=expression(paste(epsilon, "(learning)")), freq=F, xlim=c(0,1)) 
+#     hist(b[, i], main=round(mean(b[, i]),3), xlab="b (Go bias)", freq=F )
+#     hist(pi[, i], main=round(mean(pi[, i]),3), xlab=expression(paste(pi, "(Pav. parameter)")), freq=F, xlim=c(0,5))
+#     hist(log(rho[, i]), main=round(mean(log(rho[, i])),3), xlab=expression( paste("log(", rho, ") (effective size)") ), freq=F, xlim=c(-2,5))
+#     dev.off()
+#   }
+# }
+
+if (saveFiles) {
+  save.image( file.path(saveDir, paste("HBA_", modelName, "_nchains", nchains, "_", saveName, 
+                                       "_niters", niter, "_nwarmup", nwarmup,
+                                       ".Rdata", sep="") )  )
+}
+if (saveIndPars) {
+  write.table(allIndPars, file = file.path(saveDir, paste("indPars", modelName, "_N", numSubjs,
+                                                          ".txt", sep="") ),
+              row.names=F, col.names=T, sep="\t")
+}
+if (sendEmail) {
+  # send mail - check the email address below!!
+  sendmail("wooyoung.ahn@gmail.com", paste("model=", modelName, ", fileName = ", saveName),
+           paste("Check ", getwd(), ". It took ", as.character.Date(timeTook), sep="") )
+}
+
+# end of the code
+
+
+## Plot each participant's pi histograms
+
+library(fOptions)
+
+sobelmat=runif.sobol(numSubjs,3,1,0,Sys.time())  	
+
+for (i in 1:numSubjs) {
+  tmpColor = c( sobelmat[i, 1:3], 0.2)
+  hist(pi[, i], xlim=c(-1,1), ylab="", xlab="pi", col=rgb( tmpColor[1], tmpColor[2], tmpColor[3], tmpColor[4] )     )
+  par(new=T)
+}
+
+
+
+
+
+

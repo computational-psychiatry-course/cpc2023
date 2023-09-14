@@ -1,0 +1,299 @@
+# GNG_simulation_RBS.R
+# Simulate data with RBS estimated parameters (or even simulated parameters)
+# cues 1: goWin (go to win), 2: nogoWin (noGo to win), 
+# 3: goAvoid (go to avoid losing), 4: nogoAvoid (noGo to avoid losing)
+# v2: multiple agents for each subject
+# multi: simulate multiple subjects
+# v3: changed actionCorrect and added colnames...
+# v4: essentially same as v3...
+# v5: added an option for rho (rho is log scale or raw scale)
+# v6: added M6 = an option for two learning parameters (one for go, the other for nogo)
+# v7_M10: added M10 = an option for separate pavlovian bias parameters (one for gain one for loss)
+# v7_M11: added M11 = an option for separate rho parameters (one for gain one for loss)
+# v8_M11: added an option to save simulated data as a text file
+# v9_M11: 3/18/2016. Using a new set of simulated parameters...
+
+rm(list=ls())
+library(ggplot2)  
+#source("~/Documents/R_library/myFunctions/movingAvg.R")  
+##################################################
+setwd("~/Dropbox/RL/analysis/GN/modeling/")
+#saveData = T  # save simulated data or not? T or F.
+#parFile = "indParsGNG_M11_Stan_v15_N102_combined"  # HBA estimates
+#parFile = "indParsGNG_M11_Stan_v15_N50"
+parFile = "indParsGNG_M11_Stan_v15_N52"
+#parFile = "simulPars_M11_m3"   # simulation pars
+modelVersion = "M11"   # < M6: single learning paramter, M7: two learning rate
+saveChoiceData = 0     # save choice data? 1 or 0
+rhoLogScale = F   # rho is in log scale? T or F. F for v5 or later. T for simulPars_v1, F for simulPars_v2
+numTrials = 240; 
+numAgents = 10;  # number of agents per subject
+numTrPerCue = numTrials / 4
+#numSubjs = 20;
+#xi = 0.05# noise
+#ep = 0.2 # learning
+#b = 1  # bias
+#pi = 0.2 # pavlovian bias
+#rho = 2  # util sensitivity (this is in fact log(rho))
+congRate = 0.8  # congruency of outcomes
+##################################################
+
+indPars = read.table(paste(parFile, ".txt", sep=""), header=T)
+
+if (rhoLogScale) {
+  print("No change for rho")
+} else {
+  if (modelVersion != "M11") {
+    indPars$rho = log(indPars$rho)
+  } else {
+    indPars$rhoRew = log(indPars$rhoRew)
+    indPars$rhoPun = log(indPars$rhoPun)
+  }
+}
+
+numSubjs = dim(indPars)[1]  # number of subjects
+subjIDs = indPars$subjID    # subject IDs
+
+if (length(subjIDs) == 0) {  #  this is for simulPars...
+  subjIDs = 1:dim(indPars)[1]
+}
+
+wv_g = array(0, c(numSubjs, numAgents, 4, numTrPerCue))
+wv_ng = array(0, c(numSubjs, numAgents, 4, numTrPerCue))
+qv_g  = array(0, c(numSubjs, numAgents, 4, numTrPerCue))
+qv_ng = array(0, c(numSubjs, numAgents, 4, numTrPerCue))
+sv = array(0, c(numSubjs, numAgents, 4, numTrPerCue))
+pGo = array(0.5, c(numSubjs, numAgents, 4, numTrPerCue))
+outcome = array(NA, c(numSubjs, numAgents, numTrials) )
+keyPressed = array(NA, c(numSubjs, numAgents, numTrials) )
+cues = array(NA, c(numSubjs, numAgents, numTrials) )
+success = array(NA, c(numSubjs, numAgents, numTrials) )
+congruentOutcome = array(NA, c(numSubjs, numAgents, numTrials) )
+
+#########################################################################################################
+# CAUTION!! These cues are based on NEMO data!! Cues in Masip-Guitart 2012 Fig 2 are in different order!!
+#########################################################################################################
+actionCorrect = rbind( c(1,2), c(2,1), c(1,2), c(2, 1) )  # (1=correct, 2=incorrect). 4 cues x 2 actions (go, nogo) 
+outcomeAll = rbind( c(1,0), c(1,0), c(0, -1), c(0, -1)) # 4 cues x 2 (correct outcome, incorrect outcome)
+# outcome1 = c(1, 0)   # correct outcome, incorrect outcome, correct action (1 for go, 0 for nogo)
+# outcome2 = c(1, 0)
+# outcome3 = c(0, -1)
+# outcome4 = c(0, -1)
+
+colnames(actionCorrect) = c("go", "nogo")
+colnames(outcomeAll) = c("corrOutcome", "incorrOutcome")
+rownames(actionCorrect) = c("goWin", "nogoWin", "goAvoid", "nogoAvoid")
+rownames(outcomeAll) = c("goWin", "nogoWin", "goAvoid", "nogoAvoid")
+
+# data to be saved:
+# trialNum, cue, keyPressed, success, congruentOutcome, outcome, 
+
+allChoiceDat = NULL
+for (i in 1:numSubjs) {
+  xi = indPars[i, "xi"] 
+  ep = indPars[i, "ep"] 
+  b = indPars[i, "b"] 
+  #rho = indPars[i, "rho"] 
+  
+  if (modelVersion=="M6") {
+    pi = indPars[i, "pi"] 
+    rho = indPars[i, "rho"] 
+  }
+  if (modelVersion=="M8") {
+    pi = indPars[i, "pi"] 
+    epNG = indPars[i, "epNG"]
+    rho = indPars[i, "rho"] 
+  }
+  if (modelVersion=="M10") {
+    piRew = indPars[i, "piRew"] 
+    piPun = indPars[i, "piPun"]
+    rho = indPars[i, "rho"] 
+  }
+  if (modelVersion=="M11") {
+    pi = indPars[i, "pi"] 
+    rhoRew = indPars[i, "rhoRew"] 
+    rhoPun = indPars[i, "rhoPun"] 
+  }
+  
+  for (aIdx in 1:numAgents) {
+    # cues --> equal number of cues =1,2,3,4
+    allCues = sample( c( rep(1,numTrPerCue), rep(2,numTrPerCue), rep(3, numTrPerCue), rep(4,numTrPerCue)), replace=F)
+    cues[i, aIdx, ] = allCues
+    cueTr = c(0,0,0,0)  # cue trial
+    
+    for (t in 1:numTrials) {
+      currCue = allCues[t]  # current cue
+      cueTr[currCue] = cueTr[currCue] + 1
+      tmpTr = cueTr[currCue]  
+      congr = sample( c(1,2), 1, prob=c(congRate, 1-congRate) )  # 1=congr, 2=incongr
+      congruentOutcome[i,aIdx,t] = congr
+      # WV
+      if (modelVersion =="M10") {
+          if (currCue < 3) {   # gain trials
+            wv_g[i, aIdx, currCue, tmpTr] <- qv_g[i, aIdx, currCue, tmpTr] + b + piRew * sv[i, aIdx, currCue, tmpTr]
+          } else {
+            wv_g[i, aIdx, currCue, tmpTr] <- qv_g[i, aIdx, currCue, tmpTr] + b + piPun * sv[i, aIdx, currCue, tmpTr]
+          }
+      } else { # for M6 or M8 or M11
+        wv_g[i, aIdx, currCue, tmpTr] <- qv_g[i, aIdx, currCue, tmpTr] + b + pi * sv[i, aIdx, currCue, tmpTr]  
+      }
+      
+      wv_ng[i, aIdx, currCue, tmpTr] <- qv_ng[i, aIdx, currCue, tmpTr] # qv_ng is always equal to wv_ng (regardless of action)      
+      
+      #pGo[i, aIdx, currCue, tmpTr] = exp(wv_g[i, aIdx, currCue, tmpTr]) / ( exp(wv_g[i, aIdx, currCue, tmpTr]) + exp(wv_ng[i, aIdx, currCue, tmpTr]) )
+      pGo[i, aIdx, currCue, tmpTr] = 1 / ( 1 + exp(wv_ng[i, aIdx, currCue, tmpTr] - wv_g[i, aIdx, currCue, tmpTr]) )
+      pGo[i, aIdx, currCue, tmpTr] = pGo[i, aIdx, currCue, tmpTr] * (1 - xi) + xi/2  # xi (noise)
+      
+      keyPressed[i,aIdx,t] = sample(c(1,0), size=1, prob= c(pGo[i, aIdx, currCue, tmpTr], 1-pGo[i, aIdx, currCue, tmpTr]) ) 
+      tmpCorrect = actionCorrect[currCue, 2-keyPressed[i,aIdx,t] ]  # 1-->1, 0-->2. tmpCorrect ==> 1=correct or 2=incorrect
+      tmpCorrectModified = ifelse(congr==1, tmpCorrect, 3-tmpCorrect)  # switch correctness based on congr
+      success[i,aIdx,t] = 2- tmpCorrect   # tmpCorrect ==1 --> success =1, tmpCorrect==2 --> success=0
+      outcome[i,aIdx,t] = outcomeAll[ currCue, tmpCorrectModified]
+      
+      #cat("trial=", t, ", cue=", currCue,", cue tr=", tmpTr, ", pGo=", pGo[i, currCue, tmpTr], 
+      #    ", pressed=", keyPressed[i,t], ", correct=", tmpCorrect, ", congr=", congr, ", outcome=", outcome[i,t], "\n")  # print
+      
+      if (tmpTr < numTrials/4) {
+        
+        # update action values
+        if (keyPressed[i,aIdx,t]) { # update go value only w/ RW
+          if (modelVersion == "M11") {
+            # if gain outcome
+            if (outcome[i,aIdx,t] >=0) {
+              sv[i, aIdx, currCue, tmpTr+1] = sv[i, aIdx, currCue, tmpTr] + ep * (exp(rhoRew) * outcome[i,aIdx,t] - sv[i, aIdx, currCue, tmpTr ]); 
+              qv_g[i, aIdx, currCue, tmpTr+1] <- qv_g[i, aIdx, currCue, tmpTr] + ep * (exp(rhoRew) * outcome[i,aIdx,t] - qv_g[i, aIdx, currCue, tmpTr]);  
+              qv_ng[i, aIdx, currCue, tmpTr+1] <- qv_ng[i, aIdx, currCue, tmpTr]  # no change  
+            } else {  # loss outcome
+              sv[i, aIdx, currCue, tmpTr+1] = sv[i, aIdx, currCue, tmpTr] + ep * (exp(rhoPun) * outcome[i,aIdx,t] - sv[i, aIdx, currCue, tmpTr ]); 
+              qv_g[i, aIdx, currCue, tmpTr+1] <- qv_g[i, aIdx, currCue, tmpTr] + ep * (exp(rhoPun) * outcome[i,aIdx,t] - qv_g[i, aIdx, currCue, tmpTr]);  
+              qv_ng[i, aIdx, currCue, tmpTr+1] <- qv_ng[i, aIdx, currCue, tmpTr]  # no change  
+            }
+          } else {  # if Model != M11
+            # after receiving feedback, update sv[t+1]
+            sv[i, aIdx, currCue, tmpTr+1] = sv[i, aIdx, currCue, tmpTr] + ep * (exp(rho) * outcome[i,aIdx,t] - sv[i, aIdx, currCue, tmpTr ]); 
+            qv_g[i, aIdx, currCue, tmpTr+1] <- qv_g[i, aIdx, currCue, tmpTr] + ep * (exp(rho) * outcome[i,aIdx,t] - qv_g[i, aIdx, currCue, tmpTr]);  
+            qv_ng[i, aIdx, currCue, tmpTr+1] <- qv_ng[i, aIdx, currCue, tmpTr]  # no change  
+          }
+        } else { # update no-go value w/ RW, update go value w/ other terms
+          if (modelVersion !="M8") { # for all models except M8
+            if (modelVersion == "M11") {  # M11
+              if (outcome[i,aIdx,t] >=0) {  # gain trials
+                # after receiving feedback, update sv[t+1]
+                sv[i, aIdx, currCue, tmpTr+1] = sv[i, aIdx, currCue, tmpTr] + ep * (exp(rhoRew) * outcome[i,aIdx,t] - sv[i, aIdx, currCue, tmpTr ]); 
+                qv_g[i, aIdx, currCue, tmpTr+1] <- qv_g[i, aIdx, currCue, tmpTr]  # no change
+                qv_ng[i, aIdx, currCue, tmpTr+1] <- qv_ng[i, aIdx, currCue, tmpTr] + ep * (exp(rhoRew) * outcome[i,aIdx,t] - qv_ng[i, aIdx, currCue, tmpTr])
+              } else { # loss trials
+                sv[i, aIdx, currCue, tmpTr+1] = sv[i, aIdx, currCue, tmpTr] + ep * (exp(rhoPun) * outcome[i,aIdx,t] - sv[i, aIdx, currCue, tmpTr ]); 
+                qv_g[i, aIdx, currCue, tmpTr+1] <- qv_g[i, aIdx, currCue, tmpTr]  # no change
+                qv_ng[i, aIdx, currCue, tmpTr+1] <- qv_ng[i, aIdx, currCue, tmpTr] + ep * (exp(rhoPun) * outcome[i,aIdx,t] - qv_ng[i, aIdx, currCue, tmpTr])
+              }
+            } else {  # for M6 or M10
+              # after receiving feedback, update sv[t+1]
+              sv[i, aIdx, currCue, tmpTr+1] = sv[i, aIdx, currCue, tmpTr] + ep * (exp(rho) * outcome[i,aIdx,t] - sv[i, aIdx, currCue, tmpTr ]); 
+              qv_g[i, aIdx, currCue, tmpTr+1] <- qv_g[i, aIdx, currCue, tmpTr]  # no change
+              qv_ng[i, aIdx, currCue, tmpTr+1] <- qv_ng[i, aIdx, currCue, tmpTr] + ep * (exp(rho) * outcome[i,aIdx,t] - qv_ng[i, aIdx, currCue, tmpTr])
+            }
+          } else {  # for M8 (separate learning rate)
+            # after receiving feedback, update sv[t+1]
+            sv[i, aIdx, currCue, tmpTr+1] = sv[i, aIdx, currCue, tmpTr] + epNG * (exp(rho) * outcome[i,aIdx,t] - sv[i, aIdx, currCue, tmpTr ]); 
+            qv_g[i, aIdx, currCue, tmpTr+1] <- qv_g[i, aIdx, currCue, tmpTr]  # no change
+            qv_ng[i, aIdx, currCue, tmpTr+1] <- qv_ng[i, aIdx, currCue, tmpTr] + epNG * (exp(rho) * outcome[i,aIdx,t] - qv_ng[i, aIdx, currCue, tmpTr])
+          }
+        }
+      } else {
+        #cat("cue=", currCue, "has all trials \n")
+      }  
+      #print("TR=", t, ", pGo[1]=",  pGo[1], ", pGo[2]=",  pGo[2], ", pGo[3]=",  pGo[3], ", pGo[4]=",  pGo[4] )
+      
+    } # end of t loop
+  } # end of aIdx loop
+  
+  cat("subject ", i, " out of ", numSubjs, " done. \n" )
+  
+  # only save the last aIdx data... 
+  allChoiceDat = rbind(allChoiceDat, cbind(1:240, allCues, keyPressed[i, aIdx, ], success[i, aIdx, ], congruentOutcome[i, aIdx, ], outcome[i, aIdx, ], i  ) )
+    
+  
+} # end of i loop
+
+colnames(allChoiceDat) = c("trialNum", "cue", "keyPressed", "success", "congruentOutcome", "outcome", "subjID")
+
+# # save a subject's data
+# allDat = NULL
+# for (i in 1:numSubjs) {
+#   tmpDat = cbind( 1:numTrials, cues[i, ], keyPressed[i, ], success[i, ], congruentOutcome[i, ], outcome[i, ], 
+#                 xi, ep, b, pi, rho, paste("S", i, sep="") )
+#   allDat = rbind(allDat, tmpDat)
+# }
+# colnames(allDat) = c("trialNum", "cue", "keyPressed", "success", "congruentOutcome", "outcome", 
+#                      "xi", "ep", "b", "pi", "rho", "subjID")  
+# if (saveData) {
+#   write.table(allDat, file= paste("GNG_simulData_N", numSubjs,"_xi", xi, "ep", ep, "b", b, "pi", pi, "rho", rho, 
+#                                 ".txt", sep=""), sep="\t", row.names=F )
+# }
+
+tmpPGo = apply(pGo, c(1,3,4), mean)  # average across agents --> 44x4x60 matrix
+pGoMean = apply(tmpPGo, c(2,3), mean) # average across subjects --> 4x60 matrix
+#pGoMean = apply(pGo, c(2,3), mean)  # average across subjects
+tmpPGoSD = apply(pGo, c(1,3,4), sd)  # average across agents --> 44x4x60 matrix
+pGoSD = apply(tmpPGoSD, c(2,3), sd) # average across subjects --> 4x60 matrix
+#pGoSD = apply(pGo, c(2,3), sd)  # average across subjects
+
+# NEMO version
+plot(pGoMean[1,], type="l", ylim=c(0,1), xlab="Trial", ylab="Prob (Go)", main=paste("N=", numSubjs, ", NEMO version", sep="") )
+lines(pGoMean[2,], type="l", col=2)
+lines(pGoMean[3,], type="l", col=3)
+lines(pGoMean[4,], type="l", col=4)
+legend("bottomleft", c("GoWin(1)", "NogoWin(2)", "GoAvoid(3)", "NogoAvoid(4)"), col=1:4, lty=1, bty="n", cex=0.8)
+
+# Guitart-Masip version
+plot(pGoMean[1,], type="l", ylim=c(0,1), xlab="Trial", ylab="Prob (Go)", main=paste("N=", numSubjs, ", Guitart-Masip version", sep=""))
+lines(pGoMean[3,], type="l", col=2)
+lines(pGoMean[2,], type="l", col=3)
+lines(pGoMean[4,], type="l", col=4)
+legend("bottomleft", c("GoWin(1)", "GoAvoid(3)", "NogoWin(2)", "NogoAvoid(4)"), col=1:4, lty=1, bty="n", cex=0.8)
+
+# ggplot2 version
+#pGoMean = apply(pGo, c(2,3), mean)  # average across subjects
+pGoPlot = data.frame(
+  Trial=c(1:numTrPerCue, 1:numTrPerCue, 1:numTrPerCue, 1:numTrPerCue),
+  mean = c( pGoMean[1, ], pGoMean[2, ], pGoMean[3, ], pGoMean[4, ] ) ,
+  sd = c(pGoSD[1, ], pGoSD[2, ], pGoSD[3, ], pGoSD[4, ]),
+  sem = c(pGoSD[1, ]/sqrt( numTrPerCue ), pGoSD[2, ]/sqrt( numTrPerCue ), pGoSD[3, ]/sqrt( numTrPerCue ), pGoSD[4, ]/sqrt( numTrPerCue )),
+  cue = as.factor( c(rep(1, numTrPerCue), rep(2, numTrPerCue), rep(3, numTrPerCue), rep(4, numTrPerCue)) )
+)
+
+eb <- aes(ymax = mean + 2*sem, ymin = mean- 2*sem)
+#eb <- aes(ymax = mean + sd, ymin = mean- sd)
+quartz()
+f1 = ggplot(data = pGoPlot, aes(x = Trial, y = mean, group=cue, colour=cue) ) + 
+  scale_colour_manual(values = c("blue", "green", "red", "black" ), labels=c("GoWin", "NogoWin", "GoAvoid", "NogoAvoid") ) +
+  geom_line(size = 2) + 
+  geom_ribbon(eb, alpha = 0.25, colour=NA ) +
+  #xlab("Block") + ylab("Adv - Disadv Choices / Block") +
+  xlab("Trial") + ylab("Prob (Go)") +
+  ylim(0,1) +
+  scale_x_discrete(breaks = seq(0, 60, by=10)) +
+  theme(axis.title.x = element_text(size = 20, colour = 'Black') )  +
+  theme(axis.text.x = element_text(size = 15) ) +
+  theme(axis.title.y = element_text(size = 20, colour = 'Black', angle=90) ) +
+  theme(axis.text.y = element_text(size = 15, angle=90) ) 
+#scale_group_discrete( breaks=c("GoWin", "NogoWin", "GoAvoid", "NogoAvoid") )
+print(f1)
+
+
+# save choice data?
+if (saveChoiceData) {
+  write.table(allChoiceDat, file= paste("GNG_simulData_N", numSubjs, "_parFile_", parFile, 
+                                  ".txt", sep=""), sep="\t", row.names=F, col.names=T )
+  
+}
+
+# save a subject's data
+
+
+
+
+
+
+
