@@ -1,0 +1,2 @@
+# Materials
+The materials for the tutorial is available on [GitHub](https://ilabcode.github.io/pyhgf/notebooks/Exercise_1_Using_the_HGF.html#hgf-exercises) and you can access the [Colab notebook](https://colab.research.google.com/github/ilabcode/pyhgf/blob/master/docs/source/notebooks/Exercise_1_Using_the_HGF.ipynb) which you will work on during the session.

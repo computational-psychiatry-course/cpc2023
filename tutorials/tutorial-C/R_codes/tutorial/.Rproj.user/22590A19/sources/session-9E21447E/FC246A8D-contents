@@ -1,0 +1,112 @@
+# rasterPlot.R 
+# generate a raster plot like Fig 2 in Marc-Guitart 2012 Neuroimage
+# if GNG_simulations_RBS_v2.R is ran before this code (loadedSimulationRBS=T), 
+#this code also compared real choices and model predictions
+# v2: Optionally, save each individual's simulation fits
+
+library(raster)
+source("~/Dropbox/R_library/myFunctions/movingAvg.R")
+####################################################################################
+gn_path = "~/Dropbox/RL/analysis/GN/modeling/"  # GN data path (multiple subjects)
+#fileName = "GNG_simulData_N40_xi0.05ep0.2b1pi0.2rho2.txt"
+loadedSimulationRBS = F  # 
+saveIndFigs = F # save individual subjects' simulation results? T or F
+save_simuls = "~/Dropbox/RL/analysis/GN/modeling/simulationFits"  # save individual simulation results here
+#fileName = "GNmodelReady_all_N102.txt"  # including .txt    
+fileName = "GNmodelReady_group1_N50.txt"     
+#fileName = "GNmodelReady_group2_N52.txt"     
+#fileName = "GNG_simulData_N10_m4.txt"
+movingAverageSize = 5
+####################################################################################
+
+dat = read.table(file.path(gn_path, fileName), header=T)  
+subjList =  unique(dat[,"subjID"])  # list of subjects x blocks
+numSubjs = length(subjList)  # number of subjects
+numConds = 4
+maxTrials = dim(dat)[1] / numSubjs
+trialsPerCond = maxTrials/ numConds
+# 1: goWin (go to win), 2: nogoWin (noGo to win), 
+# 3: goAvoid (go to avoid losing), 4: nogoAvoid (noGo to avoid losing)
+
+# create behavRaster matrix
+behavRaster = array(NA, c(numSubjs, trialsPerCond, numConds))
+
+goWin <- raster(nrow=numSubjs, ncol=trialsPerCond, xmn=1, xmx=trialsPerCond, ymn=0, ymx=1)
+goAvoid <- raster(nrow=numSubjs, ncol=trialsPerCond, xmn=1, xmx=trialsPerCond, ymn=0, ymx=1)
+nogoWin <- raster(nrow=numSubjs, ncol=trialsPerCond, xmn=1, xmx=trialsPerCond, ymn=0, ymx=1)
+nogoAvoid <- raster(nrow=numSubjs, ncol=trialsPerCond, xmn=1, xmx=trialsPerCond, ymn=0, ymx=1)
+
+#goWin = array(NA, c(numSubjs, trialsPerCond))
+
+for (i in 1:numSubjs) {
+  curSubj = subjList[i]
+  tmp = subset(dat, subjID == curSubj)
+  goWinTmp = subset(tmp, cue==1)
+  goAvoidTmp = subset(tmp, cue==3)
+  nogoWinTmp = subset(tmp, cue==2)
+  nogoAvoidTmp = subset(tmp, cue==4)
+    
+  goWin[i, 1:trialsPerCond] = pmax(goWinTmp$keyPressed)
+  goAvoid[i, 1:trialsPerCond] = goAvoidTmp$keyPressed
+  nogoWin[i, 1:trialsPerCond] = nogoWinTmp$keyPressed
+  nogoAvoid[i, 1:trialsPerCond] = nogoAvoidTmp$keyPressed
+  
+  if (saveIndFigs) {
+    # behav data - filtered with moving average
+    #pdf(height=5,width=10,file = file.path(save_simuls, paste("GNG_simulationFits_", parFile,"_", subjIDs[i], ".pdf", sep="") ) )
+    pdf(height=5,width=10,file = file.path(save_simuls, paste("GNG_simulationFits_", parFile,"_", subjList[i], ".pdf", sep="") ) )
+    layout(matrix(c(1:4), 1, 4, byrow=T) )
+    
+    pGoTmp = pGo[i, , , ]  # 20 (# of simul agents) x 4 (cues) x 60 (trials/cond)
+    pGoTmp2 = apply(pGoTmp, c(2,3), mean) # average across agents --> 4x60 matrix
+    # goWin - cue==1
+    goWinFilt = movingAvg(goWinTmp$keyPressed, fsize=movingAverageSize, nt=trialsPerCond)
+    #plot(goWinFilt, type="b", ylim=c(0,1), xlab="Trial", ylab="Prob(Go)", main=paste("Go to win. Subj=", subjIDs[i], sep="") )
+    plot(goWinFilt, type="b", ylim=c(0,1), xlab="Trial", ylab="Prob(Go)", main=paste("Go to win. Subj=", subjList[i], sep="") )
+    lines(pGoTmp2[1,], col="red")
+    # go to avoid - cue==3
+    goAvoidFilt = movingAvg(goAvoidTmp$keyPressed, fsize=movingAverageSize, nt=trialsPerCond)
+    plot(goAvoidFilt, type="b", ylim=c(0,1), xlab="Trial", ylab="Prob(Go)", main="Go to avoid")
+    lines(pGoTmp2[3,], col="red")
+    # nogo to win - cue==2
+    nogoWinFilt = movingAvg(nogoWinTmp$keyPressed, fsize=movingAverageSize, nt=trialsPerCond)
+    plot(nogoWinFilt, type="b", ylim=c(0,1), xlab="Trial", ylab="Prob(Go)", main="Nogo to win")
+    lines(pGoTmp2[2,], col="red")
+    # nogo to avoid - cue==4
+    nogoAvoidFilt = movingAvg(nogoAvoidTmp$keyPressed, fsize=movingAverageSize, nt=trialsPerCond)
+    plot(nogoAvoidFilt, type="b", ylim=c(0,1), xlab="Trial", ylab="Prob(Go)", main="Nogo to avoid")
+    lines(pGoTmp2[4,], col="red")
+    
+    dev.off()  # save 
+  }
+
+}
+
+quartz(width=12, height=4); par(mai=c(0.6732, 0.6, 0.5412, 0.2772))
+layout( matrix(1:numConds, 1, numConds, byrow=F))
+## GoWin condition
+image(goWin, col = gray.colors(n=10, start=0.7, end=1), main="Go to win", xlab="Trial", ylab="Probability(Go)", cex.lab=2, cex.main=2, cex.axis=1.5)
+groupMean = apply( as.array(goWin), 2, mean)
+lines(1:trialsPerCond, groupMean, lwd=5, col=rgb(0,0,0,.8))
+if (loadedSimulationRBS) lines(1:trialsPerCond, pGoMean[1,], lwd=5, col=rgb(1,0,0,0.6)) 
+
+## GoAvoid condition
+image(goAvoid, col = gray.colors(n=10, start=0.7, end=1), main="Go to avoid", xlab="Trial", ylab="", cex.lab=2, cex.main=2, cex.axis=1.5 )
+groupMean = apply( as.array(goAvoid), 2, mean)
+lines(1:trialsPerCond, groupMean, lwd=5, col=rgb(0,0,0,.8))
+if (loadedSimulationRBS) lines(1:trialsPerCond, pGoMean[3,], lwd=5, col=rgb(1,0,0,0.6)) 
+
+## nogoWin condition
+image(nogoWin, col = gray.colors(n=10, start=0.7, end=1), main="Nogo to win", xlab="Trial", ylab="", cex.lab=2, cex.main=2, cex.axis=1.5 )
+groupMean = apply( as.array(nogoWin), 2, mean)
+lines(1:trialsPerCond, groupMean, lwd=5, col=rgb(0,0,0,.8))
+if (loadedSimulationRBS) lines(1:trialsPerCond, pGoMean[2,], lwd=5, col=rgb(1,0,0,0.6)) 
+
+## NogoAvoid condition
+image(nogoAvoid, col = gray.colors(n=10, start=0.7, end=1), main="Nogo to avoid", xlab="Trial", ylab="", cex.lab=2, cex.main=2, cex.axis=1.5 )
+groupMean = apply( as.array(nogoAvoid), 2, mean)
+lines(1:trialsPerCond, groupMean, lwd=5, col=rgb(0,0,0,.8))
+if (loadedSimulationRBS) lines(1:trialsPerCond, pGoMean[4,], lwd=5, col=rgb(1,0,0,0.6)) 
+
+
+

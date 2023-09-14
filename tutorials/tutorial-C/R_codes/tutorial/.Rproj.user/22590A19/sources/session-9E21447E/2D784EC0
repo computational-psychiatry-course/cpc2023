@@ -1,0 +1,26 @@
+{
+    "id": "2D784EC0",
+    "path": "~/Dropbox/RL/analysis/GN/modeling/GNG_Stan_M11_HBA_v15.R",
+    "project_path": null,
+    "type": "r_source",
+    "hash": "0",
+    "contents": "",
+    "dirty": false,
+    "created": 1668581043475.0,
+    "source_on_save": false,
+    "relative_order": 9,
+    "properties": {
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "4,11",
+        "scrollLine": "0"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1668580980,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1668580980,
+    "read_only": false,
+    "read_only_alternatives": []
+}

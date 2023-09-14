@@ -1,0 +1,27 @@
+# Programmed by Woo-Young Ahn
+# for Computational Psychiatry Course 2021, RL workshop
+
+rm(list=ls())  # clear workspace
+library(hBayesDM)  # load hBayesDM. hBayesDM should be installed first. 
+
+# competition_data <- file.choose   # you can select a file with this line
+competition_data = "~/Dropbox/Research/Conferences/2021_Computational_Psychiatry_Course/competition/tom2007_behav.txt"
+
+
+# run ra_noRA (type ?ra_noRA for more info)
+output1 = ra_noRA(competition_data, niter=2000, nwarmup=1000, nchain=2, ncore=2, inits="fixed")
+# check if rhat is less than 1.1
+rhat(output1, less = 1.1)
+# plot individual parameters
+plotInd(output1, "lambda")  # lambda (loss aversion)
+plotInd(output1, "tau")  # tau (inverse temperature)
+
+# run a model with no loss aversion but with risk aversion
+output2 = ra_noLA(competition_data, niter=2000, nwarmup=1000, nchain=2, ncore=2, inits="fixed")
+
+# check if rhat is less than 1.1
+rhat(output2, less = 1.1)
+
+# do model comparisons w/ printFit
+printFit(output1, output2)
+
